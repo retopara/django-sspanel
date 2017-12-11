@@ -197,10 +197,10 @@ class SSUser(models.Model):
         return check_day == now_day
 
     def clean(self):
-        '''保证端口在1024<50000之间'''
+        '''保证端口在10<50000之间'''
         if self.port:
-            if not 1024 < self.port < 50000:
-                raise ValidationError('端口必须在1024和50000之间')
+            if not 10 < self.port < 50000:
+                raise ValidationError('端口必须在10和50000之间')
         else:
             max_port_user = SSUser.objects.order_by('-port').first()
             if max_port_user:
