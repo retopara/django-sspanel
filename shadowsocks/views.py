@@ -11,14 +11,14 @@ from django.db.models import Q
 from django.conf import settings
 from decimal import Decimal
 # 导入shadowsocks节点相关文件
-from .models import Node, InviteCode, User, Aliveip, Donate, Shop, MoneyCode, PurchaseHistory, AlipayRecord, NodeOnlineLog, AlipayRequest, NodeInfoLog, Announcement, Ticket, RebateRecord
+from .models import InviteCode, User, Donate, Shop, MoneyCode, PurchaseHistory, AlipayRecord, AlipayRequest,  Announcement, Ticket, RebateRecord
 from .forms import RegisterForm, LoginForm, NodeForm, ShopForm, AnnoForm
 
 # 导入加密混淆协议选项
-from .models import METHOD_CHOICES, PROTOCOL_CHOICES, OBFS_CHOICES
+from ssserver.models import METHOD_CHOICES, PROTOCOL_CHOICES, OBFS_CHOICES
 
 # 导入ssservermodel
-from ssserver.models import SSUser, TrafficLog
+from ssserver.models import SSUser, TrafficLog, Node, NodeOnlineLog, NodeInfoLog
 
 # 导入第三方模块
 import qrcode
@@ -137,6 +137,11 @@ def Login_view(request):
                     anno = Announcement.objects.all()[0]
                 except:
                     anno = None
+                min_traffic = '{}m'.format(
+                    int(settings.MIN_CHECKIN_TRAFFIC / 1024 / 1024))
+                max_traffic = '{}m'.format(
+                    int(settings.MAX_CHECKIN_TRAFFIC / 1024 / 1024))
+                remain_traffic = 100 - eval(user.ss_user.get_used_percentage())
                 registerinfo = {
                     'title': '登录成功！',
                     'subtitle': '自动跳转到用户中心',
@@ -145,6 +150,12 @@ def Login_view(request):
                 context = {
                     'registerinfo': registerinfo,
                     'anno': anno,
+                    'remain_traffic': remain_traffic,
+                    'min_traffic': min_traffic,
+                    'max_traffic': max_traffic,
+                    'sub_link': user.get_sub_link(),
+                    'sub_code': Node.get_sub_code(user),
+
                 }
                 return render(request, 'sspanel/userinfo.html', context=context)
             else:
@@ -157,7 +168,6 @@ def Login_view(request):
                 context = {
                     'registerinfo': registerinfo,
                     'form': form,
-
                 }
                 return render(request, 'sspanel/login.html', context=context)
     else:
@@ -171,8 +181,8 @@ def Logout_view(request):
     '''用户登出函数'''
     logout(request)
     registerinfo = {
-        'title': '注销成功！',
-        'subtitle': '欢迎下次再来!！',
+        'title': '注销成功',
+        'subtitle': '欢迎下次再来',
                     'status': 'success',
     }
     context = {
@@ -195,12 +205,18 @@ def userinfo(request):
     min_traffic = '{}m'.format(int(settings.MIN_CHECKIN_TRAFFIC / 1024 / 1024))
     max_traffic = '{}m'.format(int(settings.MAX_CHECKIN_TRAFFIC / 1024 / 1024))
     remain_traffic = 100 - eval(user.ss_user.get_used_percentage())
+    # 订阅地址
+    sub_link = user.get_sub_link()
+    # 节点导入链接
+    sub_code = Node.get_sub_code(user)
     context = {
         'user': user,
         'anno': anno,
         'remain_traffic': remain_traffic,
         'min_traffic': min_traffic,
         'max_traffic': max_traffic,
+        'sub_link': sub_link,
+        'sub_code': sub_code,
     }
     return render(request, 'sspanel/userinfo.html', context=context)
 
@@ -298,43 +314,6 @@ def donate(request):
     context = {'donatelist': donatelist, }
     if settings.USE_ALIPAY == True:
         context['alipay'] = True
-        # 尝试获取流水号
-        if request.method == 'POST':
-            number = eval(request.POST.get('q'))
-            if number < 10:
-                registerinfo = {
-                    'title': '失败',
-                    'subtitle': '请保证金额大于10元',
-                    'status': 'error', }
-                context['registerinfo'] = registerinfo
-                return render(request, 'sspanel/donate.html', context=context)
-            else:
-                out_trade_no = datetime.datetime.fromtimestamp(
-                    time.time()).strftime('%Y%m%d%H%M%S%s')
-                try:
-                    # 获取金额数量
-                    amount = number
-                    # 生成订单
-                    trade = alipay.api_alipay_trade_precreate(
-                        subject=settings.ALIPAY_TRADE_INFO.format(amount),
-                        out_trade_no=out_trade_no,
-                        total_amount=amount,
-                        timeout_express='60s',)
-                    # 获取二维码链接
-                    code_url = trade.get('qr_code', '')
-                    request.session['code_url'] = code_url
-                    request.session['out_trade_no'] = out_trade_no
-                    request.session['amount'] = amount
-                    # 将订单号传入模板
-                    context['out_trade_no'] = out_trade_no
-                except:
-                    res = alipay.api_alipay_trade_cancel(
-                        out_trade_no=out_trade_no)
-                    registerinfo = {
-                        'title': '糟糕，当面付插件可能出现问题了',
-                        'subtitle': '如果一直失败,请后台联系站长',
-                        'status': 'error', }
-                    context['registerinfo'] = registerinfo
     else:
         # 关闭支付宝支付
         context['alipay'] = False
@@ -344,60 +323,26 @@ def donate(request):
 @login_required
 def gen_face_pay_qrcode(request):
     '''生成当面付的二维码'''
-    # 从seesion中获取订单的二维码
-    url = request.session.get('code_url', '')
-    # 生成支付宝申请记录
-    record = AlipayRequest.objects.create(username=request.user,
-                                          info_code=request.session['out_trade_no'],
-                                          amount=request.session['amount'],)
-    # 删除sessions信息
-    del request.session['code_url']
-    del request.session['out_trade_no']
-    del request.session['amount']
-    # 生成ss二维码
-    img = qrcode.make(url)
-    buf = BytesIO()
-    img.save(buf)
-    image_stream = buf.getvalue()
-    # 构造图片reponse
-    response = HttpResponse(image_stream, content_type="image/png")
-
-    return response
-
-
-@login_required
-def Face_pay_view(request, out_trade_no):
-    '''当面付处理逻辑'''
-    context = {}
-    user = request.user
-    paid = False
-    # 等待1秒后再查询支付结果
-    time.sleep(1)
-    res = alipay.api_alipay_trade_query(out_trade_no=out_trade_no)
-    if res.get("trade_status", "") == "TRADE_SUCCESS":
-        paid = True
-        amount = Decimal(res.get("total_amount", 0))
-        # 生成对于数量的充值码
-        code = MoneyCode.objects.create(number=amount)
-        # 充值操作
-        user.balance += code.number
-        user.save()
-        code.user = user.username
-        code.isused = True
-        code.save()
-        # 将充值记录和捐赠绑定
-        donate = Donate.objects.create(user=user, money=amount)
-        # 后台数据库增加记录
-        record = AlipayRecord.objects.create(username=user,
-                                             info_code=out_trade_no, amount=amount, money_code=code)
-        # 返回充值码到网页
-        messages.info(request, '充值成功{}元，请去商品界面购买'.format(amount))
-        return HttpResponseRedirect('/donate')
-    # 如果30秒内没有支付，则关闭订单：
-    if paid is False:
-        alipay.api_alipay_trade_cancel(out_trade_no=out_trade_no)
-        messages.warning(request, "充值失败了!自动跳转回充值界面")
-        return HttpResponseRedirect('/donate')
+    try:
+        # 从seesion中获取订单的二维码
+        url = request.session.get('code_url', '')
+        # 生成支付宝申请记录
+        record = AlipayRequest.objects.create(username=request.user,
+                                              info_code=request.session['out_trade_no'],
+                                              amount=request.session['amount'],)
+        # 删除sessions信息
+        del request.session['code_url']
+        del request.session['amount']
+        # 生成ss二维码
+        img = qrcode.make(url)
+        buf = BytesIO()
+        img.save(buf)
+        image_stream = buf.getvalue()
+        # 构造图片reponse
+        response = HttpResponse(image_stream, content_type="image/png")
+        return response
+    except:
+        return HttpResponse('wrong request')
 
 
 @login_required
@@ -408,7 +353,7 @@ def nodeinfo(request):
     ss_user = request.user.ss_user
     user = request.user
     # 加入等级的判断
-    nodes = Node.objects.filter(level__lte=user.level, show='显示').values()
+    nodes = Node.objects.filter(show='显示').values()
     # 循环遍历每一条线路的在线人数
     for node in nodes:
         # 生成SSR和SS的链接
@@ -426,9 +371,7 @@ def nodeinfo(request):
             node['count'] = 0
         nodelists.append(node)
     # 订阅地址
-    token = base64.b64encode(
-        bytes(user.username, 'utf-8')).decode('ascii') + '&&' + base64.b64encode(bytes(user.password, 'utf-8')).decode('ascii')
-    sub_link = settings.HOST + 'server/subscribe/' + token
+    sub_link = user.get_sub_link()
     context = {
         'nodelists': nodelists,
         'ss_user': ss_user,
@@ -441,36 +384,13 @@ def nodeinfo(request):
 @login_required
 def trafficlog(request):
     '''跳转到流量记录的页面'''
-    ss_user = request.user.ss_user
-    nodes = Node.objects.all()
-    node_id = request.GET.get('nodes', nodes[0].pk)
-    # 检索符合要求得记录
-    traffic = TrafficLog.objects.filter(
-        user_id=ss_user.user_id, node_id=node_id)
-    node_name = Node.objects.get(pk=node_id)
-    # 记录的前10条
-    logs = traffic[:10]
-    log_dic = []
-    for log in logs:
-        # 循环加入流量记录得时间
-        rec = {
-            't': timezone.datetime.fromtimestamp(log.log_time),
-            'traffic': log.traffic,
-            'node_id': log.node_id
-        }
-        log_dic.append(rec)
-    # 记录该节点所消耗的所有流量
-    total = 0
-    for ll in traffic:
-        total += ll.upload_traffic + ll.download_traffic
-    total = total / settings.GB
-    context = {'ss_user': ss_user,
-               'log_dic': log_dic,
-               'nodes': nodes,
-               'total': '{:.2f} GB'.format(total),
-               'node_name': node_name,
 
-               }
+    ss_user = request.user.ss_user
+    nodes = Node.objects.filter(show='显示')
+    context = {
+        'ss_user': ss_user,
+        'nodes': nodes,
+    }
     return render(request, 'sspanel/trafficlog.html', context=context)
 
 
@@ -485,57 +405,6 @@ def shop(request):
                'goods': goods, }
 
     return render(request, 'sspanel/shop.html', context=context)
-
-
-@login_required
-def purchase(request, goods_id):
-    '''商品购买逻辑'''
-
-    goods = Shop.objects.all()
-    good = goods.get(pk=goods_id)
-    user = request.user
-    ss_user = request.user.ss_user
-
-    if user.balance < good.money:
-        registerinfo = {
-            'title': '金额不足！',
-            'subtitle': '请联系站长充值',
-            'status': 'error', }
-        context = {'ss_user': ss_user,
-                   'goods': goods,
-                   'registerinfo': registerinfo,
-                   }
-        return render(request, 'sspanel/shop.html', context=context)
-
-    else:
-        # 验证成功进行提权操作
-        ss_user.enable = True
-        ss_user.transfer_enable += good.transfer
-        user.balance -= good.money
-        user.level = good.level
-        user.level_expire_time = timezone.now() + datetime.timedelta(days=good.days)
-        ss_user.save()
-        user.save()
-        # 增加购买记录
-        record = PurchaseHistory(info=good, user=user, money=good.money,
-                                 purchtime=timezone.now())
-        record.save()
-        # 增加返利记录
-        inviter = User.objects.get(pk=user.invited_by)
-        rebaterecord = RebateRecord(
-            user_id=inviter.pk, money=good.money * Decimal(settings.INVITE_PERCENT))
-        inviter.balance += rebaterecord.money
-        inviter.save()
-        rebaterecord.save()
-        registerinfo = {
-            'title': '够买成功',
-            'subtitle': '即将跳转回用户中心',
-            'status': 'success', }
-        context = {
-            'ss_user': ss_user,
-            'registerinfo': registerinfo,
-        }
-        return render(request, 'sspanel/userinfo.html', context=context)
 
 
 @login_required
@@ -578,6 +447,7 @@ def charge(request):
             context = {
                 'registerinfo': registerinfo,
                 'ss_user': user,
+                'codelist': codelist,
             }
             return render(request, 'sspanel/chargecenter.html', context=context)
 
@@ -592,7 +462,9 @@ def charge(request):
                     'status': 'error', }
                 context = {
                     'registerinfo': registerinfo,
-                    'ss_user': user, }
+                    'ss_user': user,
+                    'codelist': codelist,
+                }
                 return render(request, 'sspanel/chargecenter.html', context=context)
             else:
                 # 充值操作
@@ -622,7 +494,6 @@ def charge(request):
 def announcement(request):
     '''网站公告列表'''
     anno = Announcement.objects.all()
-
     return render(request, 'sspanel/announcement.html', {'anno': anno})
 
 
@@ -631,7 +502,6 @@ def ticket(request):
     '''工单系统'''
     ticket = Ticket.objects.filter(user=request.user)
     context = {'ticket': ticket}
-
     return render(request, 'sspanel/ticket.html', context=context)
 
 
@@ -689,7 +559,6 @@ def ticket_edit(request, pk):
             'title': '修改成功',
             'subtitle': '数据更新成功',
             'status': 'success', }
-
         context = {
             'registerinfo': registerinfo,
             'ticket': Ticket.objects.filter(user=request.user)
@@ -706,14 +575,13 @@ def ticket_edit(request, pk):
 @login_required
 def affiliate(request):
     '''推广页面'''
-
     if request.user.pk != 1:
         invidecodes = InviteCode.objects.filter(
             code_id=request.user.pk, type=0)
         inviteNum = request.user.invitecode_num - len(invidecodes)
     else:
         # 如果是管理员，特殊处理
-        # 写死，每次呢个生成5额邀请码
+        # 写死，每次只能生成5额邀请码
         invidecodes = InviteCode.objects.filter(
             code_id=request.user.pk, type=0, isused=False)
         inviteNum = 5
@@ -740,7 +608,6 @@ def rebate_record(request):
 @permission_required('shadowsocks')
 def backend_index(request):
     '''跳转到后台界面'''
-
     context = {
         'userNum': User.userNum(),
     }
@@ -751,7 +618,6 @@ def backend_index(request):
 @permission_required('shadowsocks')
 def backend_node_info(request):
     '''节点编辑界面'''
-
     nodes = Node.objects.all()
     context = {
         'nodes': nodes,
@@ -765,12 +631,10 @@ def node_delete(request, node_id):
     node = Node.objects.filter(node_id=node_id)
     node.delete()
     nodes = Node.objects.all()
-
     registerinfo = {
         'title': '删除节点',
         'subtitle': '成功啦',
                     'status': 'success', }
-
     context = {
         'nodes': nodes,
         'registerinfo': registerinfo
@@ -792,7 +656,6 @@ def node_edit(request, node_id):
                 'title': '修改成功',
                 'subtitle': '数据更新成功',
                 'status': 'success', }
-
             context = {
                 'nodes': nodes,
                 'registerinfo': registerinfo,
@@ -832,7 +695,6 @@ def node_create(request):
                 'title': '添加成功',
                 'subtitle': '数据更新成功！',
                 'status': 'success', }
-
             context = {
                 'nodes': nodes,
                 'registerinfo': registerinfo,
@@ -942,17 +804,6 @@ class Page_List_View(object):
         }
 
         return context
-
-
-@permission_required('shadowsocks')
-def backend_Aliveuser(request):
-    '''返回在线用户的ip的View'''
-
-    obj = Aliveip
-    page_num = 10
-    context = Page_List_View(request, obj, page_num).get_page_context()
-
-    return render(request, 'backend/aliveuser.html', context=context)
 
 
 @permission_required('shadowsocks')
@@ -1208,8 +1059,7 @@ def purchase_history(request):
 
 @permission_required('shadowsocks')
 def backend_anno(request):
-    '''公告管理界面'''
-
+    '''公告管理界面'''
     anno = Announcement.objects.all()
     context = {
         'anno': anno,
@@ -1223,12 +1073,10 @@ def anno_delete(request, pk):
     anno = Announcement.objects.filter(pk=pk)
     anno.delete()
     anno = Announcement.objects.all()
-
     registerinfo = {
         'title': '删除公告',
         'subtitle': '成功啦',
                     'status': 'success', }
-
     context = {
         'anno': anno,
         'registerinfo': registerinfo
@@ -1246,9 +1094,8 @@ def anno_create(request):
             anno = Announcement.objects.all()
             registerinfo = {
                 'title': '添加成功',
-                'subtitle': '数据更新成功！',
+                'subtitle': '数据更新成功',
                 'status': 'success', }
-
             context = {
                 'anno': anno,
                 'registerinfo': registerinfo,
@@ -1259,13 +1106,11 @@ def anno_create(request):
                 'title': '错误',
                 'subtitle': '数据填写错误',
                 'status': 'error', }
-
             context = {
                 'form': form,
                 'registerinfo': registerinfo,
             }
             return render(request, 'backend/annocreate.html', context=context)
-
     else:
         form = AnnoForm()
         return render(request, 'backend/annocreate.html', context={'form': form, })
@@ -1274,9 +1119,7 @@ def anno_create(request):
 @permission_required('shadowsocks')
 def anno_edit(request, pk):
     '''公告编辑'''
-
     anno = Announcement.objects.get(pk=pk)
-
     # 当为post请求时，修改数据
     if request.method == "POST":
         form = AnnoForm(request.POST, instance=anno)
@@ -1286,7 +1129,6 @@ def anno_edit(request, pk):
                 'title': '修改成功',
                 'subtitle': '数据更新成功',
                 'status': 'success', }
-
             context = {
                 'registerinfo': registerinfo,
                 'anno': Announcement.objects.all(),
@@ -1297,7 +1139,6 @@ def anno_edit(request, pk):
                 'title': '错误',
                 'subtitle': '数据填写错误',
                 'status': 'error', }
-
             context = {
                 'form': form,
                 'registerinfo': registerinfo,
@@ -1307,7 +1148,6 @@ def anno_edit(request, pk):
     # 当请求不是post时，渲染form
     else:
         anno.body = tomd.convert(anno.body)
-
         context = {
             'anno': anno,
         }

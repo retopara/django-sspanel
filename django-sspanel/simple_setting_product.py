@@ -16,7 +16,11 @@ DATABASES = {
         'PASSWORD': 'pass',
         'HOST': '127.0.0.1',
         'PORT': '3306',
-
+        'OPTIONS': {
+            'autocommit': True,
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'charset': 'utf8mb4',
+        },
     }
 }
 
@@ -39,6 +43,7 @@ DEFAULT_FROM_EMAIL = 'Ehco<ADDRESS>'
 MB = 1024 * 1024
 GB = 1024 * 1024 * 1024
 DEFAULT_TRAFFIC = 5 * GB
+START_PORT  = 1024
 
 # 默认加密混淆协议
 DEFAULT_METHOD = 'aes-256-cfb'

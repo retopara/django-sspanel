@@ -2,9 +2,7 @@
 DEBUG = True
 
 # 域名设置
-ALLOWED_HOSTS = [
-    '127.0.0.1',
-]
+ALLOWED_HOSTS = ['*']
 # mysql 设置
 DATABASES = {
 
@@ -30,6 +28,7 @@ USE_SMTP = False
 MB = 1024 * 1024
 GB = 1024 * 1024 * 1024
 DEFAULT_TRAFFIC = 5 * GB
+START_PORT = 1024
 
 # 默认加密混淆协议
 DEFAULT_METHOD = 'aes-128-ctr'

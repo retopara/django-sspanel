@@ -4,17 +4,19 @@ import base64
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
+from django.http import FileResponse, StreamingHttpResponse
 from django.shortcuts import HttpResponse, HttpResponseRedirect, redirect, render
 from django.utils import timezone
-from shadowsocks.models import User, Node
+from shadowsocks.models import User
 from shadowsocks.forms import UserForm
 from .forms import ChangeSsPassForm, SSUserForm
-from .models import SSUser, TrafficLog
+from .models import SSUser, TrafficLog, Node, NodeInfoLog, NodeOnlineLog
 
 # 导入加密混淆协议选项
 from .models import METHOD_CHOICES, PROTOCOL_CHOICES, OBFS_CHOICES
 
 # Create your views here.
+
 
 @permission_required('ssesrver')
 def User_edit(request, pk):
@@ -91,7 +93,7 @@ def ChangeSsPass(request):
                 'registerinfo': registerinfo,
                 'ss_user': ss_user,
             }
-            return render(request, 'sspanel/userinfoedit.html', context=context)
+            return redirect('/users/userinfoedit/')
         else:
             return redirect('/')
     else:
@@ -216,8 +218,22 @@ def auto_reset_traffic():
 def clean_traffic_log():
     '''月初清空所有流量记录'''
     res = TrafficLog.objects.all().delete()
-    log = str(log)
-    print('all record removed!:{}'.format(log))
+    log = str(res)
+    print('all traffic record removed!:{}'.format(log))
+
+
+def clean_online_log():
+    '''月初清空所有在线记录'''
+    res = NodeOnlineLog.objects.all().delete()
+    log = str(res)
+    print('all online record removed!:{}'.format(log))
+
+
+def clean_node_log():
+    '''月初清空所有节点负载记录'''
+    res = NodeInfoLog.objects.all().delete()
+    log = str(res)
+    print('all node info record removed!:{}'.format(log))
 
 
 def auto_register(num, level=0):
@@ -233,9 +249,9 @@ def auto_register(num, level=0):
         ss_user = SSUser.objects.create(user=user, port=port)
 
 
-@permission_required('ssesrver')
+@permission_required('ssserver')
 def clean_zombie_user(request):
-    '''清楚从未使用过的用户'''
+    '''清除从未使用过的用户'''
     import datetime
     users = User.objects.all()
     count = 0
@@ -253,37 +269,59 @@ def clean_zombie_user(request):
     return render(request, 'backend/index.html', context=context)
 
 
-def testcheck(request):
-    '''test url '''
-    # auto_register(10)
-    # do some test page
-    # check_user_state()
-    # clean_traffic_log()
-    return HttpResponse('ok')
-
-
-def Subscribe(request, token):
+def subscribe(request, token):
     '''
     返回ssr订阅链接
     '''
-    username = token.split('&&')[0]
-    user = base64.b64decode(username)
+    user = base64.b64decode(token).decode('utf8')
+    # 验证token
     try:
         user = User.objects.get(username=user)
         ss_user = user.ss_user
-    except:
-        return HttpResponse('ERROR')
-    # 验证token
-    keys = base64.b64encode(bytes(user.username, 'utf-8')).decode('ascii') + \
-        '&&' + base64.b64encode(bytes(user.password, 'utf-8')).decode('ascii')
-    if token == keys:
-        # 生成订阅链接部分
-        sub_code = ''
         # 遍历该用户所有的节点
-        node_list = Node.objects.filter(level__lte=user.level,show='显示')
+        node_list = Node.objects.filter(level__lte=user.level, show='显示')
+        # 生成订阅链接部分
+        sub_code = 'MAX={}\n'.format(len(node_list))
         for node in node_list:
             sub_code = sub_code + node.get_ssr_link(ss_user) + "\n"
         sub_code = base64.b64encode(bytes(sub_code, 'utf8')).decode('ascii')
         return HttpResponse(sub_code)
-    else:
+    except:
         return HttpResponse('ERROR')
+
+
+@login_required
+def node_config(request):
+    '''返回节点json配置'''
+    user = request.user
+    node_list = Node.objects.filter(level__lte=user.level, show='显示')
+    data = {'configs': []}
+    for node in node_list:
+        if node.custom_method == 0:
+            data['configs'].append({
+                "remarks": node.name,
+                "enable": True,
+                "password": user.ss_user.password,
+                "method": node.method,
+                "server": node.server,
+                "obfs": node.obfs,
+                "protocol": node.protocol,
+                "server_port": user.ss_user.port,
+                "remarks_base64": base64.b64encode(bytes(node.name, 'utf8')).decode('ascii'),
+            })
+        else:
+            data['configs'].append({
+                "remarks": node.name,
+                "enable": True,
+                "password": user.ss_user.password,
+                "method": user.ss_user.method,
+                "server": node.server,
+                "obfs": user.ss_user.obfs,
+                "protocol": user.ss_user.protocol,
+                "server_port": user.ss_user.port,
+                "remarks_base64": base64.b64encode(bytes(node.name, 'utf8')).decode('ascii')
+            })
+    response = StreamingHttpResponse(json.dumps(data, ensure_ascii=False))
+    response['Content-Type'] = 'application/octet-stream'
+    response['Content-Disposition'] = 'attachment; filename="ss.json"'
+    return response

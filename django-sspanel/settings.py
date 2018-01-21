@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/1.11/ref/settings/
 import os
 import platform
 # 导入自定义设定文件
-if platform.node() == 'EhcodeMBP.lan':
+if platform.node() == 'Ehco-iMac.lan':
     from .simple_setting_local import *
 else:
     from.simple_setting_product import *
@@ -122,7 +122,7 @@ USE_L10N = True
 USE_TZ = False
 
 # session 设置
-SESSION_COOKIE_AGE = 60 * 60 # 60分钟
+SESSION_COOKIE_AGE = 60 * 60  # 60分钟
 SESSION_SAVE_EVERY_REQUEST = True
 
 
@@ -147,5 +147,9 @@ CRONJOBS = [
      '>>' + BASE_DIR + '/logs/trafficrest.log'),  # 每月月初重置免费用户流量，日志写入logs
     ('0 1 1 * *', 'ssserver.views.clean_traffic_log',
      '>>' + BASE_DIR + '/logs/trafficrest.log'),  # 每月第一天凌晨1点删除所有流量记录，日志写入logs
+    ('0 2 1 * *', 'ssserver.views.clean_online_log',
+     '>>' + BASE_DIR + '/logs/trafficrest.log'),  # 每月第一天凌晨2点删除节点在线记录，日志写入logs
+    ('0 3 1 * *', 'ssserver.views.clean_node_log',
+     '>>' + BASE_DIR + '/logs/trafficrest.log'),  # 每月第一天凌晨3点删除所有节点负载，日志写入logs
 
 ]

@@ -3,7 +3,7 @@ from . import models
 
 
 class SSUserAdmin(admin.ModelAdmin):
-    list_display = ['user', 'port', 'traffic', 'fulltraffic', ]
+    list_display = ['user', 'level', 'port', 'traffic', 'fulltraffic', ]
 
     def fulltraffic(self, obj):
         return '{} GB'.format(obj.transfer_enable / 1024 / 1024 / 1024)
@@ -13,10 +13,28 @@ class SSUserAdmin(admin.ModelAdmin):
         return '{} GB'.format(obj.get_traffic())
     traffic.short_description = '使用流量'
 
-    search_fields = ['user__username','user__email','port','user__pk']
+    search_fields = ['user__username', 'user__email', 'port', 'user__pk']
+
+
+class TrafficLogAdmin(admin.ModelAdmin):
+    list_display = ['user_id', 'node_id', 'traffic', 'log_date', ]
+
+
+class NodeAdmin(admin.ModelAdmin):
+    list_display = ['node_id', 'name', 'level', 'show', ]
+
+
+class NodeOnlineAdmin(admin.ModelAdmin):
+    list_display = ['node_id', 'online_user']
+
+
+class NodeInfoAdmin(admin.ModelAdmin):
+    list_display = ['node_id', 'load']
 
 
 # Register your models here.
 admin.site.register(models.SSUser, SSUserAdmin)
-admin.site.register(models.TrafficLog)
-
+admin.site.register(models.TrafficLog, TrafficLogAdmin)
+admin.site.register(models.Node, NodeAdmin)
+admin.site.register(models.NodeOnlineLog, NodeOnlineAdmin)
+admin.site.register(models.NodeInfoLog, NodeInfoAdmin)
